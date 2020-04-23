@@ -11,7 +11,6 @@ class Board:
 	def __init__(self, size=9):
 		self.size = size
 		self.board = np.zeros((size, size, 2*size*size), int)
-		self.ko = None
 		self.movenumber = 0
 	
 	def move(self, x, y, color):
@@ -30,6 +29,8 @@ class Board:
 		self.board[:, :, m] = self.board[:, :, m-1]
 		self.board[x, y, m] = color
 		self.simplify(color)
+		if m > 1 and self.board[x,y,m-2] == color and (self.board[:,:, m] == self.board[:,:, m-2]).all(): # (japaneese) ko
+			return ILLEGAL
 		return color
 	
 	def state(self):
@@ -38,6 +39,7 @@ class Board:
 	def simplify(self, color):
 		g, groups = self.groups(self.board[:,:,self.movenumber])
 		l, libs = self.liberties(g, groups)
+		libs = np.abs(libs)
 		for x in range(self.size):
 			for y in range(self.size):
 				i = -g[x,y]*color
@@ -83,6 +85,7 @@ class Board:
 	
 	def liberties(self, g, groups):
 		liberties = np.zeros((self.size, self.size, groups), int)
+		group_color = np.zeros(groups)
 		for x in range(self.size):
 			for y in range(self.size):
 				if g[x,y] == 0:
@@ -94,11 +97,44 @@ class Board:
 						liberties[x, y, abs(g[x, y-1])-1] = 1
 					if y + 1 < self.size and g[x, y+1] != 0:
 						liberties[x, y, abs(g[x, y+1])-1] = 1
+				else:
+					group_color[abs(g[x, y])-1] = g[x,y]
+		group_color = np.sign(group_color)
 		print(np.sum(liberties, axis=(0,1)))
-		return liberties, np.sum(liberties, axis=(0,1))
+		return liberties, np.sum(liberties, axis=(0,1))*group_color
 		
+	def areascore(self):
+		b = self.board[:,:,self.movenumber]
+		g, _ = self.groups(b)
+		g = np.sign(g)
+		white_territory = np.zeros(b.shape, int)
+		black_territory = np.zeros(b.shape, int)
+		
+		def recurse(x, y, color, territory):
+				
+			if x - 1 >= 0 and g[x-1, y] == 0 and territory[x-1, y] == 0:
+				territory[x-1, y] = color
+				recurse(x-1, y, color, territory)
+			if x + 1 < self.size and g[x+1, y] == 0 and territory[x+1, y] == 0:
+				territory[x+1, y] = color
+				recurse(x+1, y, color, territory)
+			if y - 1 >= 0 and g[x, y-1] == 0 and territory[x, y-1] == 0:
+				territory[x, y-1] = color
+				recurse(x, y-1, color, territory)
+			if y + 1 < self.size and g[x, y+1] == 0 and territory[x, y+1] == 0:
+				territory[x, y+1] = color
+				recurse(x, y+1, color, territory)
+		for x in range(self.size):
+			for y in range(self.size):
+				if g[x,y] == BLACK:
+					recurse(x, y, BLACK, black_territory)
+				elif g[x,y] == WHITE:
+					recurse(x, y, WHITE, white_territory)
+					print(x,y)
+					print(white_territory)
+		return np.sum(white_territory + black_territory + g)
+	
 	def score(self):
-		# !!!! liberties are never negative, bad scoring makes no sense then!!!!
 		print('scoring')
 		g, groups = self.groups(self.board[:,:,self.movenumber])
 		l, libs = self.liberties(g, groups)
@@ -113,7 +149,7 @@ def match(playerblack, playerwhite, update=None, spectater=None):
 	passing = False
 	while True:
 		if spectater != None:
-			spectater(200)
+			spectater(20)
 		if color == WHITE:
 			m = playerwhite(board)
 		else:
@@ -134,12 +170,13 @@ def match(playerblack, playerwhite, update=None, spectater=None):
 		if msg == DRAW:
 			break
 		if msg == ILLEGAL:
+			print('Illegal move')
 			break
 		color *= -1
 		if update != None:
 			update(board, m)
 	#calculate winner...
-	s = board.score() + 6.5
+	s = board.areascore() + 6.5
 	if s > 0:
 		print('W+%.1f' % s)
 	else:
@@ -151,5 +188,6 @@ if __name__ == '__main__':
 	screen = GUI(9)
 	
 	match(strat.weakest_group, strat.take_shared_liberty, lambda b, _: screen.draw(b.state()), screen.wait)
+	#match(strat.weakest_group, strat.take_shared_liberty)
 	
 	
